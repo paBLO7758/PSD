@@ -1,25 +1,31 @@
 CC = gcc
 CFLAGS = -c -g -Wall
 
-EXECS = clientGame serverGame
+# Directorio de salida
+OUT_DIR = out
 
-all: game.o $(EXECS)
+EXECS = $(OUT_DIR)/clientGame $(OUT_DIR)/serverGame
 
-game.o: game.c
-	$(CC) $(CFLAGS) game.c
+all: $(OUT_DIR) $(OUT_DIR)/game.o $(EXECS)
 
-clientGame: game.o clientGame.o 
-	$(CC) game.o clientGame.o -o clientGame
+# Crear la carpeta out si no existe
+$(OUT_DIR):
+	mkdir -p $(OUT_DIR)
 
-clientGame.o: clientGame.c
-	$(CC) $(CFLAGS) clientGame.c
+$(OUT_DIR)/game.o: game.c
+	$(CC) $(CFLAGS) game.c -o $(OUT_DIR)/game.o
 
-serverGame: game.o serverGame.o 
-	$(CC) game.o serverGame.o -lpthread -o serverGame
+$(OUT_DIR)/clientGame: $(OUT_DIR)/game.o $(OUT_DIR)/clientGame.o 
+	$(CC) $(OUT_DIR)/game.o $(OUT_DIR)/clientGame.o -o $(OUT_DIR)/clientGame
 
-serverGame.o: serverGame.c
-	$(CC) $(CFLAGS) serverGame.c
-	
+$(OUT_DIR)/clientGame.o: clientGame.c
+	$(CC) $(CFLAGS) clientGame.c -o $(OUT_DIR)/clientGame.o
+
+$(OUT_DIR)/serverGame: $(OUT_DIR)/game.o $(OUT_DIR)/serverGame.o 
+	$(CC) $(OUT_DIR)/game.o $(OUT_DIR)/serverGame.o -lpthread -o $(OUT_DIR)/serverGame
+
+$(OUT_DIR)/serverGame.o: serverGame.c
+	$(CC) $(CFLAGS) serverGame.c -o $(OUT_DIR)/serverGame.o
+    
 clean:
-	rm -f  *.o
-	rm -f $(EXECS)
+	rm -rf $(OUT_DIR)
