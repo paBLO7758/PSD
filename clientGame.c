@@ -23,26 +23,22 @@ void sendMessageToServer (int socketServer, char* message){
  * @param message Message to be received
  */
 void receiveMessageFromServer (int socketServer, char* message){
-		unsigned int messageLength;
+	unsigned int messageLength;
 
 	// Receive message length
 	recv(socketServer, &messageLength, sizeof(unsigned int), 0);
 
 	// Receive message
-	recv(socketServer, message, messageLength, 0);
+	unsigned int bytesReceived = 0;
+    while(messageLength > bytesReceived){
+		int bytes = recv(socketServer, message + bytesReceived, messageLength - bytesReceived, 0);
+		if(bytes <= 0) {
+			fprintf(stderr, "Error receiving board from server\n");
+			break;
+		}
+		bytesReceived += bytes;
 
-	/*
-	unsigned int totalTextReceived = 0;
-    while (totalTextReceived < messageLength) {
-        int bytes = recv(socketServer, message + totalTextReceived, 
-                         messageLength - totalTextReceived, 0);
-        if (bytes <= 0) {
-            // Manejar error o desconexión
-            break;
-        }
-        totalTextReceived += bytes;
-    }
-	*/
+	}
 
 	message[messageLength] = '\0';
 	
@@ -58,9 +54,8 @@ void receiveBoard (int socketServer, tBoard board){
 	unsigned int bytesReceived = 0;
 
 	// Get message length
-	unsigned int messageLength= sizeof(tBoard);
+	unsigned int messageLength;
 
-	// Receive message length
 	recv(socketServer, &messageLength, sizeof(unsigned int), 0);
 
 	// Receive message
@@ -161,63 +156,104 @@ int main(int argc, char *argv[]){
 	char* serverIP;						/** Server IP */
     tString playerName;                    /** Name of the player */
 
+
+	// Check arguments!
+	if (argc != 3){
+		fprintf(stderr,"ERROR wrong number of arguments\n");
+		fprintf(stderr,"Usage:\n$>%s serverIP port\n", argv[0]);
+		exit(0);
+	}
+
+	// Get the server address
+	serverIP = argv[1];
+
+	// Get the port
+	port = atoi(argv[2]);
+
+	// Create socket
+	socketfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	socketfd < 0 ? fprintf(stderr,"ERROR opening  socket\n") : fprintf(stdout,"Socket created successfully\n");
+
+	// Fill server address structure
+	memset(&server_address, 0, sizeof(server_address));
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.s_addr = inet_addr(serverIP);
+	server_address.sin_port = htons(port);
+
+	if (connect(socketfd, (struct sockaddr *) &server_address, sizeof(server_address)) < 0)
+		showError("ERROR connecting");
+
+	// Connect with server
 	
 
+	// Init player's name
+	do {
+		memset(playerName, 0, STRING_LENGTH);
+		printf ("Enter player name:");
+		fgets(playerName, STRING_LENGTH-1, stdin);
 
+		// Remove '\n'
+		playerName[strlen(playerName)-1] = 0;
 
-		// Check arguments!
-		if (argc != 3){
-			fprintf(stderr,"ERROR wrong number of arguments\n");
-			fprintf(stderr,"Usage:\n$>%s serverIP port\n", argv[0]);
-			exit(0);
+	} while (strlen(playerName) <= 2);
+
+	// Send player's name to server
+	sendMessageToServer(socketfd, playerName);
+
+	// Receive message from server
+	tString message;
+	receiveMessageFromServer(socketfd, message);
+	printf("%s\n", message);
+
+    tBoard board;
+
+	printf("Game starts!\n");
+
+	while(1){
+		//Receive turn code from server
+		unsigned int turnCode = receiveCode(socketfd);
+
+		if(turnCode == GAMEOVER_WIN){
+			printf("You win!\n");
+			break;
+		}
+		else if(turnCode == GAMEOVER_LOSE){
+			printf("You lose!\n");
+			break;
+		}
+		else if(turnCode == GAMEOVER_DRAW){
+			printf("Draw game!\n");
+			break;
 		}
 
-		// Get the server address
-		serverIP = argv[1];
+		//Receive board and message from server and print it
+		char message[512];
+		receiveMessageFromServer(socketfd, message);
+		receiveBoard(socketfd, board);
+		printBoard(board, message);
 
-		// Get the port
-		port = atoi(argv[2]);
+		if(turnCode == TURN_MOVE){
+			unsigned int moveResult = wrongColumn_move;
+			while(moveResult != OK_move){
+				//Read move from player
+				unsigned int move = readMove();
 
-		// Create socket
-		socketfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-		socketfd < 0 ? fprintf(stderr,"ERROR opening  socket\n") : fprintf(stdout,"Socket created successfully\n");
+				//Send move to server
+				sendMoveToServer(socketfd, move);
+				moveResult = receiveCode(socketfd);
+				if(moveResult == wrongColumn_move){
+					printf("The column is not valid. Please, enter a new move\n");
+				}
+				else if(moveResult == fullColumn_move){
+					printf("The column is full. Please, enter a new move\n");
+				}
+			}
+		}
+	}
 
-		// Fill server address structure
-		memset(&server_address, 0, sizeof(server_address));
-		server_address.sin_family = AF_INET;
-		server_address.sin_addr.s_addr = inet_addr(serverIP);
-		server_address.sin_port = htons(port);
+	printf("Game finished!\n");
+	printf("Exiting...\n");
 
-if (connect(socketfd, (struct sockaddr *) &server_address, sizeof(server_address)) < 0)
-    showError("ERROR connecting");
-
-		// Connect with server
-		
-
-		// Init player's name
-		do{
-			memset(playerName, 0, STRING_LENGTH);
-			printf ("Enter player name:");
-			fgets(playerName, STRING_LENGTH-1, stdin);
-
-			// Remove '\n'
-			playerName[strlen(playerName)-1] = 0;
-
-		}while (strlen(playerName) <= 2);
-
-
-		
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
 
 	// Close socket
 	close (socketfd);

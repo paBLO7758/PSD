@@ -102,8 +102,16 @@ unsigned int receiveMoveFromPlayer (int socketClient){
  * @return Associated socket to player
  */
 int getSocketPlayer (tPlayer player, int player1socket, int player2socket, int player3socket){
-
-	
+	switch (player){
+		case player1:
+			return player1socket;
+		case player2:
+			return player2socket;
+		case player3:
+			return player3socket;
+		default:
+			return -1;
+	}
 }
 
 /**
@@ -113,13 +121,132 @@ int getSocketPlayer (tPlayer player, int player1socket, int player2socket, int p
  * @return Next player
  */
 tPlayer getNextPlayer (tPlayer currentPlayer){
+	switch (currentPlayer){
+		case player1:
+			return player2;
+		case player2:
+			return player3;
+		case player3:
+			return player1;
+		default:
+			return -1;
+	}
+}
 
-	
+char getChipForPlayer (tPlayer player){
+	switch (player){
+		case player1:
+			return PLAYER_1_CHIP;
+		case player2:
+			return PLAYER_2_CHIP;
+		case player3:
+			return PLAYER_3_CHIP;
+		default:
+			return -1;
+	}
 }
 
 void *threadProcessing(void *threadArgs){
+	int socketPlayer1 = ((tThreadArgs *)threadArgs)->socketPlayer1;
+	int socketPlayer2 = ((tThreadArgs *)threadArgs)->socketPlayer2;
+	int socketPlayer3 = ((tThreadArgs *)threadArgs)->socketPlayer3;
 
+	free(threadArgs);
+
+	//Receive names from players
+	char player1Name[STRING_LENGTH];
+	receiveMessageFromPlayer(socketPlayer1, player1Name);
+	char player2Name[STRING_LENGTH];
+	receiveMessageFromPlayer(socketPlayer2, player2Name);
+	char player3Name[STRING_LENGTH];
+	receiveMessageFromPlayer(socketPlayer3, player3Name);
 	
+	// Print received names
+	printf("Name of player 1 received: %s\n", player1Name);
+	printf("Name of player 2 received: %s\n", player2Name);
+	printf("Name of player 3 received: %s\n", player3Name);
+
+	// Send names to players
+	char message1[512];
+	char message2[512];
+	char message3[512];
+
+	snprintf(message1, sizeof(message1), "You are playing against %s and %s", player2Name, player3Name);	
+	snprintf(message2, sizeof(message2), "You are playing against %s and %s", player1Name, player3Name);
+	snprintf(message3, sizeof(message3), "You are playing against %s and %s", player1Name, player2Name);
+
+	sendMessageToPlayer(socketPlayer1, message1);
+	sendMessageToPlayer(socketPlayer2, message2);
+	sendMessageToPlayer(socketPlayer3, message3);
+
+	// Initialize the board
+	tBoard board;
+	initBoard(board);
+
+	tPlayer currentPlayer = player1;
+	unsigned int finished = FALSE;
+
+	while(!finished){
+		// Send turn to players
+		for(tPlayer player = player1; player <= player3; player++){
+			if(player == currentPlayer){
+				sendCodeToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), TURN_MOVE);
+				char message[STRING_LENGTH];
+				snprintf(message, STRING_LENGTH, "\n\nIt's your turn. You play with %c\n", getChipForPlayer(player));
+				sendMessageToPlayer(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), message);
+				sendBoardToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), board);
+			}
+			else {
+				sendCodeToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), TURN_WAIT);
+				char message[STRING_LENGTH];
+				snprintf(message, STRING_LENGTH, "\n\nYour rival is thinking... please, wait! You play with %c\n", getChipForPlayer(player));
+				sendMessageToPlayer(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), message);
+				sendBoardToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), board);
+			}
+		}
+
+		unsigned int moveIsValid = FALSE;
+		while(!moveIsValid){
+			// Receive move from current player
+			unsigned int move =receiveMoveFromPlayer(getSocketPlayer(currentPlayer, socketPlayer1, socketPlayer2, socketPlayer3));
+
+			unsigned int moveResult = insertChip(board, currentPlayer, move);
+			if(moveResult == OK_move){
+				moveIsValid = TRUE;
+			}
+
+			sendCodeToClient(getSocketPlayer(currentPlayer, socketPlayer1, socketPlayer2, socketPlayer3), moveResult);
+		}
+
+		// Check if the current player has won
+		if(checkWinner(board, currentPlayer)){
+			sendCodeToClient(getSocketPlayer(currentPlayer, socketPlayer1, socketPlayer2, socketPlayer3), GAMEOVER_WIN);
+			for(tPlayer player = player1; player <= player3; player++){
+				if(player != currentPlayer) sendCodeToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), GAMEOVER_LOSE);
+			}
+			finished = TRUE;
+		}
+		// Check if the board is full
+		else if(isBoardFull(board)){
+			for(tPlayer player = player1; player <= player3; player++){
+				sendCodeToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), GAMEOVER_DRAW);
+			}
+			finished = TRUE;
+		}
+		// If the game is not finished, move to the next player
+		else{
+			currentPlayer = getNextPlayer(currentPlayer);
+			
+			
+		}
+	}
+
+
+	// close sockets and exit thread
+	close(socketPlayer1);
+	close(socketPlayer2);
+	close(socketPlayer3);
+	return NULL;
 }
 
 int main(int argc, char *argv[]){
@@ -166,17 +293,29 @@ int main(int argc, char *argv[]){
 	// Listen
 	listen(socketfd, 10);
 
-	// Get length of client structure
-	clientLength = sizeof(player1Address);
+	while(1){
+		// Get length of client structure
+		clientLength = sizeof(player1Address);
 
-	// Accept connections from players
-	socketPlayer1 = accept(socketfd, (struct sockaddr *) &player1Address, &clientLength);
-	socketPlayer1 < 0 ? fprintf(stderr,"ERROR opening player 1 socket\n") : fprintf(stdout,"Player 1 is conected\n");
+		// Accept connections from players
+		socketPlayer1 = accept(socketfd, (struct sockaddr *) &player1Address, &clientLength);
+		socketPlayer1 < 0 ? fprintf(stderr,"ERROR opening player 1 socket\n") : fprintf(stdout,"Player 1 is conected!\n");
 
-	socketPlayer2 = accept(socketfd, (struct sockaddr *) &player2Address, &clientLength);
-	socketPlayer2 < 0 ? fprintf(stderr,"ERROR opening player 2 socket\n") : fprintf(stdout,"Player 2 is conected\n");
+		socketPlayer2 = accept(socketfd, (struct sockaddr *) &player2Address, &clientLength);
+		socketPlayer2 < 0 ? fprintf(stderr,"ERROR opening player 2 socket\n") : fprintf(stdout,"Player 2 is conected!\n");
 
-	socketPlayer3 = accept(socketfd, (struct sockaddr *) &player3Address, &clientLength);
-	socketPlayer3 < 0 ? fprintf(stderr,"ERROR opening player 3 socket\n") : fprintf(stdout,"Player 3 is conected\n");
-	
+		socketPlayer3 = accept(socketfd, (struct sockaddr *) &player3Address, &clientLength);
+		socketPlayer3 < 0 ? fprintf(stderr,"ERROR opening player 3 socket\n") : fprintf(stdout,"Player 3 is conected!\n");
+		
+		// Create thread to manage the game
+		threadArgs = malloc(sizeof(tThreadArgs));
+		threadArgs->socketPlayer1 = socketPlayer1;
+		threadArgs->socketPlayer2 = socketPlayer2;
+		threadArgs->socketPlayer3 = socketPlayer3;
+
+		pthread_create(&threadID, NULL, threadProcessing, (void *)threadArgs);
+		pthread_detach(threadID);
+	}
+	close(socketfd);
+
 }
