@@ -6,8 +6,15 @@
  * @param message Message to be sent
  */
 void sendMessageToServer (int socketServer, char* message){
+	// Get message length
+	unsigned int messageLength = strlen(message);
 
-	
+	// Send message length
+	send(socketServer, &messageLength, sizeof(unsigned int), 0);
+
+	// Send message
+	send(socketServer, message, messageLength, 0);
+
 }
 
 /**
@@ -16,7 +23,28 @@ void sendMessageToServer (int socketServer, char* message){
  * @param message Message to be received
  */
 void receiveMessageFromServer (int socketServer, char* message){
+		unsigned int messageLength;
 
+	// Receive message length
+	recv(socketServer, &messageLength, sizeof(unsigned int), 0);
+
+	// Receive message
+	recv(socketServer, message, messageLength, 0);
+
+	/*
+	unsigned int totalTextReceived = 0;
+    while (totalTextReceived < messageLength) {
+        int bytes = recv(socketServer, message + totalTextReceived, 
+                         messageLength - totalTextReceived, 0);
+        if (bytes <= 0) {
+            // Manejar error o desconexión
+            break;
+        }
+        totalTextReceived += bytes;
+    }
+	*/
+
+	message[messageLength] = '\0';
 	
 }
 
@@ -27,7 +55,24 @@ void receiveMessageFromServer (int socketServer, char* message){
  * @param board Board of the game
  */
 void receiveBoard (int socketServer, tBoard board){
+	unsigned int bytesReceived = 0;
 
+	// Get message length
+	unsigned int messageLength= sizeof(tBoard);
+
+	// Receive message length
+	recv(socketServer, &messageLength, sizeof(unsigned int), 0);
+
+	// Receive message
+	while(messageLength > bytesReceived){
+		int bytes = recv(socketServer, board + bytesReceived, messageLength - bytesReceived, 0);
+		if(bytes <= 0) {
+			fprintf(stderr, "Error receiving board from server\n");
+			break;
+		}
+		bytesReceived += bytes;
+
+	}
 	
 }
 
@@ -38,8 +83,10 @@ void receiveBoard (int socketServer, tBoard board){
  * @return Code
  */
 unsigned int receiveCode (int socketServer){
+	unsigned int code;
+	recv(socketServer, &code, sizeof(unsigned int), 0);
+	return code;
 
-	
 }
 
 /**
@@ -100,7 +147,8 @@ unsigned int readMove (){
  * @param move A number between [0-6] that represents the column where the chip is going to be inserted
  */
 void sendMoveToServer (int socketServer, unsigned int move){
-
+	// Send move
+	send(socketServer, &move, sizeof(unsigned int), 0);
 	
 }
 
@@ -144,8 +192,6 @@ if (connect(socketfd, (struct sockaddr *) &server_address, sizeof(server_address
     showError("ERROR connecting");
 
 		// Connect with server
-		char *msgPrueba = "¡Hola servidor, funcioan!";
-		send(socketfd, msgPrueba, strlen(msgPrueba), 0);
 		
 
 		// Init player's name

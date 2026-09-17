@@ -7,7 +7,14 @@
  * @param message Message to be sent
  */
 void sendMessageToPlayer (int socketClient, char* message){
+	// Get message length
+	unsigned int messageLength= strlen(message);
 
+	// Send message length
+	send(socketClient, &messageLength, sizeof(unsigned int), 0);
+
+	// Send message
+	send(socketClient, message, messageLength, 0);
 	
 }
 
@@ -17,7 +24,28 @@ void sendMessageToPlayer (int socketClient, char* message){
  * @param message Message to be received
  */
 void receiveMessageFromPlayer (int socketClient, char* message){
+	unsigned int messageLength;
 
+	// Receive message length
+	recv(socketClient, &messageLength, sizeof(unsigned int), 0);
+
+	// Receive message
+	recv(socketClient, message, messageLength, 0);
+
+	/*
+	unsigned int totalTextReceived = 0;
+    while (totalTextReceived < messageLength) {
+        int bytes = recv(socketClient, message + totalTextReceived, 
+                         messageLength - totalTextReceived, 0);
+        if (bytes <= 0) {
+            // Manejar error o desconexión
+            break;
+        }
+        totalTextReceived += bytes;
+    }
+	*/
+
+	message[messageLength] = '\0';
 
 }
 
@@ -27,7 +55,8 @@ void receiveMessageFromPlayer (int socketClient, char* message){
  * @param code Code to be send
  */
 void sendCodeToClient (int socketClient, unsigned int code){
-
+	// Send code
+	send(socketClient, &code, sizeof(unsigned int), 0);
 	
 }
 
@@ -37,7 +66,14 @@ void sendCodeToClient (int socketClient, unsigned int code){
  * @param board Board of the game
  */
 void sendBoardToClient (int socketClient, tBoard board){
+	// Get message length
+	unsigned int messageLength= sizeof(tBoard);
 
+	// Send message length
+	send(socketClient, &messageLength, sizeof(unsigned int), 0);
+
+	// Send message
+	send(socketClient, board, messageLength, 0);
 	
 }
 
@@ -47,8 +83,13 @@ void sendBoardToClient (int socketClient, tBoard board){
  * @return Move performed by the player
  */
 unsigned int receiveMoveFromPlayer (int socketClient){
+	unsigned int move;
 
-	
+	// Receive move
+	recv(socketClient, &move, sizeof(unsigned int), 0);
+
+	return move;
+
 }
 
 /**
@@ -130,19 +171,12 @@ int main(int argc, char *argv[]){
 
 	// Accept connections from players
 	socketPlayer1 = accept(socketfd, (struct sockaddr *) &player1Address, &clientLength);
-	socketPlayer1 < 0 ? fprintf(stderr,"ERROR opening player 1 socket\n") : fprintf(stdout,"Player 1 socket created successfully\n");
+	socketPlayer1 < 0 ? fprintf(stderr,"ERROR opening player 1 socket\n") : fprintf(stdout,"Player 1 is conected\n");
 
-	char buffer[256];
-	memset(buffer, 0, sizeof(buffer));
-	recv(socketPlayer1, buffer, sizeof(buffer) - 1, 0);
-	printf("Mensaje recibido del cliente: %s\n", buffer);
-
-
-	/*
 	socketPlayer2 = accept(socketfd, (struct sockaddr *) &player2Address, &clientLength);
-	socketPlayer2 < 0 ? fprintf(stderr,"ERROR opening player 2 socket\n") : fprintf(stdout,"Player 2 socket created successfully\n");
+	socketPlayer2 < 0 ? fprintf(stderr,"ERROR opening player 2 socket\n") : fprintf(stdout,"Player 2 is conected\n");
 
 	socketPlayer3 = accept(socketfd, (struct sockaddr *) &player3Address, &clientLength);
-	socketPlayer3 < 0 ? fprintf(stderr,"ERROR opening player 3 socket\n") : fprintf(stdout,"Player 3 socket created successfully\n");
-	*/
+	socketPlayer3 < 0 ? fprintf(stderr,"ERROR opening player 3 socket\n") : fprintf(stdout,"Player 3 is conected\n");
+	
 }
