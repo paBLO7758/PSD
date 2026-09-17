@@ -236,9 +236,11 @@ void *threadProcessing(void *threadArgs){
 		// If the game is not finished, move to the next player
 		else{
 			currentPlayer = getNextPlayer(currentPlayer);
-			
-			
 		}
+	}
+
+	for(tPlayer player = player1; player <= player3; player++){
+		sendBoardToClient(getSocketPlayer(player, socketPlayer1, socketPlayer2, socketPlayer3), board);
 	}
 
 

@@ -252,6 +252,8 @@ int main(int argc, char *argv[]){
 	}
 
 	printf("Game finished!\n");
+	receiveBoard(socketfd, board);
+	printBoard(board, "Final board:");
 	printf("Exiting...\n");
 
 
