@@ -13,6 +13,9 @@
 /** Server is full. No more games are allowed */
 #define ERROR_SERVER_FULL -2
 
+/** Player is not registered in this game */
+#define ERROR_PLAYER_NOT_FOUND -3
+
 /** Code for performing a move */
 #define TURN_MOVE 70001
 

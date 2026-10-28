@@ -1,5 +1,6 @@
 #include "soapH.h"
 #include "game.h"
+#include "utils.h"
 #include "conecta3x3.nsmap"
 #include <pthread.h>
 
@@ -16,25 +17,26 @@ typedef enum {gameEmpty, gameWaitingPlayer, gameReady} tGameState;
  * Struct that contains a game for the players
  */
 typedef struct game{
-	tGameState state;
-	char board[BOARD_WIDTH * BOARD_HEIGHT];
+    tGameState state;
+    char board[BOARD_WIDTH * BOARD_HEIGHT];
 
-	char player1Name[STRING_LENGTH];
-	char player2Name[STRING_LENGTH];
-	char player3Name[STRING_LENGTH];
+    char player1Name[STRING_LENGTH];
+    char player2Name[STRING_LENGTH];
+    char player3Name[STRING_LENGTH];
     
     int numPlayers;
-	int activePlayers;
-	conecta3x3ns__tPlayer currentPlayer;
+    int activePlayers;
+    conecta3x3ns__tPlayer currentPlayer;
 
     pthread_mutex_t mutex;
-	pthread_cond_t condTurn;
+    pthread_cond_t condTurn;
     
-}tGame;
+    int isFinished; /**< Indica si la partida ha finalizado */
+    int winner;     /**< Almacena el jugador ganador o -1 en caso de empate */
+} tGame;
 
 /** Array with games */
 tGame games[MAX_GAMES];
-
 
 
 /**
@@ -73,23 +75,22 @@ int searchEmptyGame ();
 void *processRequest(void*);
 
 
-
-
-
 void initServerStructures (struct soap *soap){
 
-	if (DEBUG_SERVER)
-		printf ("Initializing...\n");
+    if (DEBUG_SERVER)
+        printf ("Initializing...\n");
 
-	// Init seed
-	srand (time(NULL));
+    // Init seed
+    srand (time(NULL));
 
-	// Init each game
-	for (int i=0; i<MAX_GAMES; i++){
-		games[i].state = gameEmpty;
+    // Init each game
+    for (int i=0; i<MAX_GAMES; i++){
+        games[i].state = gameEmpty;
         games[i].numPlayers = 0;
         games[i].activePlayers = 0;
         games[i].currentPlayer = player1;
+        games[i].isFinished = FALSE;
+        games[i].winner = -1;
         
         // Limpiar el tablero
         initBoard(games[i].board);
@@ -102,76 +103,69 @@ void initServerStructures (struct soap *soap){
         memset(games[i].player1Name, 0, STRING_LENGTH);
         memset(games[i].player2Name, 0, STRING_LENGTH);
         memset(games[i].player3Name, 0, STRING_LENGTH);
-	
-	}
+    }
 }
 
 conecta3x3ns__tPlayer calculateNextPlayer (conecta3x3ns__tPlayer currentPlayer){
-	conecta3x3ns__tPlayer nextPlayer = player1;
-	if (currentPlayer == player1)
+    conecta3x3ns__tPlayer nextPlayer = player1;
+    if (currentPlayer == player1)
         nextPlayer = player2;
     if (currentPlayer == player2)
         nextPlayer = player3;
-	return nextPlayer;
+    return nextPlayer;
 }
 
 conecta3x3ns__tPlayer calculateRandomPlayer (){
-	conecta3x3ns__tPlayer player = player3;
-	int r = rand() % 3;
+    conecta3x3ns__tPlayer player = player3;
+    int r = rand() % 3;
     if (r == 0) player = player1;
     if (r == 1) player = player2;
     return player;
 }
 
 int searchEmptyGame (){
-	pthread_mutex_lock(&games[gameId].mutex);
-
-	for (int i = 0; i < MAX_GAMES; i++){
+    for (int i = 0; i < MAX_GAMES; i++){
         if (games[i].state == gameEmpty || games[i].state == gameWaitingPlayer){
             return i;
         }
     }
-
-	pthread_mutex_unlock(&games[gameId].mutex);
-
     return ERROR_SERVER_FULL;
-   
 }
 
 void copyGameStatusStructure (conecta3x3ns__tBlock* status, char* message, char* board, int newCode){
 
-	// Copy the message
-	strcpy ((status->msgStruct).msg, message);
-	(status->msgStruct).__size = strlen ((status->msgStruct).msg);
+    // Copy the message
+    strcpy ((status->msgStruct).msg, message);
+    (status->msgStruct).__size = strlen ((status->msgStruct).msg);
 
-	// Copy the board, only if it is not NULL
-	if (board == NULL){
-		status->board = NULL;
-		status->__size = 0;
-	}
-	else{
-		strncpy (status->board, board, BOARD_WIDTH*BOARD_HEIGHT);
-		status->__size = BOARD_WIDTH*BOARD_HEIGHT;
-	}
+    // Copy the board, only if it is not NULL
+    if (board == NULL){
+        status->board = NULL;
+        status->__size = 0;
+    }
+    else{
+        strncpy (status->board, board, BOARD_WIDTH*BOARD_HEIGHT);
+        status->__size = BOARD_WIDTH*BOARD_HEIGHT;
+    }
 
-	// Set the new code
-	status->code = newCode;
+    // Set the new code
+    status->code = newCode;
 }
 
 int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName, int* code){
-	
-	int gameId = searchEmptyGame();
+    
+    int gameId = searchEmptyGame();
 
-	if (gameId == ERROR_SERVER_FULL){
-		*code = ERROR_SERVER_FULL;
-		return SOAP_OK;
-	}
+    if (gameId == ERROR_SERVER_FULL){
+        *code = ERROR_SERVER_FULL;
+        return SOAP_OK;
+    }
 
-	//Entramos en la sección crítica para modificar el estado del juego
-	pthread_mutex_lock(&games[gameId].mutex);
+    // Entramos en la sección crítica para modificar el estado del juego
+    pthread_mutex_lock(&games[gameId].mutex);
 
-	// Comprobamos si ya existe un jugador con el mismo nombre en el juego
-	if ((games[gameId].numPlayers >= 1 && strcmp(games[gameId].player1Name, playerName.msg) == 0) ||
+    // Comprobamos si ya existe un jugador con el mismo nombre en el juego
+    if ((games[gameId].numPlayers >= 1 && strcmp(games[gameId].player1Name, playerName.msg) == 0) ||
         (games[gameId].numPlayers >= 2 && strcmp(games[gameId].player2Name, playerName.msg) == 0) ||
         (games[gameId].numPlayers >= 3 && strcmp(games[gameId].player3Name, playerName.msg) == 0)) {
         
@@ -180,8 +174,8 @@ int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName
         return SOAP_OK;
     }
 
-	//Asignamos nombre al jugador correspondiente y actualizamos el número de jugadores
-	if (games[gameId].numPlayers == 0) {
+    // Asignamos nombre al jugador correspondiente y actualizamos el número de jugadores
+    if (games[gameId].numPlayers == 0) {
         strncpy(games[gameId].player1Name, playerName.msg, STRING_LENGTH - 1);
         games[gameId].player1Name[STRING_LENGTH - 1] = '\0';
         games[gameId].state = gameWaitingPlayer;
@@ -197,13 +191,13 @@ int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName
     games[gameId].numPlayers++;
     games[gameId].activePlayers++;
 
-	// Si ya hay 3 jugadores, cambiamos el estado del juego a "listo" y seleccionamos un jugador aleatorio para comenzar
-	if (games[gameId].numPlayers == 3) {
+    // Si ya hay 3 jugadores, cambiamos el estado del juego a "listo" y seleccionamos un jugador aleatorio para comenzar
+    if (games[gameId].numPlayers == 3) {
         games[gameId].state = gameReady;
         games[gameId].currentPlayer = calculateRandomPlayer();
     }
 
-    //Devolver el ID de la partida asignada y liberar la sección crítica
+    // Devolver el ID de la partida asignada y liberar la sección crítica
     *code = gameId;
     pthread_mutex_unlock(&games[gameId].mutex);
 
@@ -323,7 +317,6 @@ int conecta3x3ns__insertChip(struct soap *soap, conecta3x3ns__tMessage playerNam
     insertChip(games[gameId].board, playerEnum, column);
 
     // Comprobar condiciones de fin de juego o cambio de turno
-
     if (checkWinner(games[gameId].board, playerEnum)) {
         games[gameId].isFinished = TRUE;
         games[gameId].winner = playerEnum;
@@ -357,81 +350,86 @@ int conecta3x3ns__insertChip(struct soap *soap, conecta3x3ns__tMessage playerNam
 
 void *processRequest(void *soap){
 
-	pthread_detach(pthread_self());
+    pthread_detach(pthread_self());
 
-	if (DEBUG_SERVER)
-		printf ("Processing a new request...");
+    if (DEBUG_SERVER)
+        printf ("Processing a new request...\n");
 
-	soap_serve((struct soap*)soap);
-	soap_destroy((struct soap*)soap);
-	soap_end((struct soap*)soap);
-	soap_done((struct soap*)soap);
-	free(soap);
+    soap_serve((struct soap*)soap);
+    soap_destroy((struct soap*)soap);
+    soap_end((struct soap*)soap);
+    soap_done((struct soap*)soap);
+    free(soap);
 
-	return NULL;
+    return NULL;
 }
 
 int main(int argc, char **argv){ 
 
-	struct soap soap;
-	struct soap *tsoap;
-	pthread_t tid;
-	int port;
-	SOAP_SOCKET m, s;
+    struct soap soap;
+    struct soap *tsoap;
+    pthread_t tid;
+    int port;
+    SOAP_SOCKET m, s;
 
-		// Init soap environment
-		soap_init(&soap);
+    if (argc < 2) {
+        printf("Usage: %s <port>\n", argv[0]);
+        exit(1);
+    }
 
-		// Configure timeouts
-		soap.send_timeout = 60; // 60 seconds
-		soap.recv_timeout = 60; // 60 seconds
-		soap.accept_timeout = 3600; // server stops after 1 hour of inactivity
-		soap.max_keep_alive = 100; // max keep-alive sequence
+    // Init soap environment
+    soap_init(&soap);
 
-		initServerStructures(&soap);
+    // Configure timeouts
+    soap.send_timeout = 60;     // 60 seconds
+    soap.recv_timeout = 60;     // 60 seconds
+    soap.accept_timeout = 3600; // server stops after 1 hour of inactivity
+    soap.max_keep_alive = 100;  // max keep-alive sequence
 
-		// Get listening port
-		port = atoi(argv[1]);
+    initServerStructures(&soap);
 
-		// Bind
-		m = soap_bind(&soap, NULL, port, 100);
+    // Get listening port
+    port = atoi(argv[1]);
 
-		if (!soap_valid_socket(m)){
-			exit(1);
-		}
+    // Bind
+    m = soap_bind(&soap, NULL, port, 100);
 
-		printf("Server is ON!\n");
+    if (!soap_valid_socket(m)){
+        exit(1);
+    }
 
-		while (TRUE){
+    printf("Server is ON!\n");
 
-			// Accept a new connection
-			s = soap_accept(&soap);
+    while (TRUE){
 
-			// Socket is not valid :(
-			if (!soap_valid_socket(s)){
+        // Accept a new connection
+        s = soap_accept(&soap);
 
-				if (soap.errnum){
-					soap_print_fault(&soap, stderr);
-					exit(1);
-				}
+        // Socket is not valid
+        if (!soap_valid_socket(s)){
 
-				fprintf(stderr, "Time out!\n");
-				break;
-			}
+            if (soap.errnum){
+                soap_print_fault(&soap, stderr);
+                exit(1);
+            }
 
-			// Copy the SOAP environment
-			tsoap = soap_copy(&soap);
+            fprintf(stderr, "Time out!\n");
+            break;
+        }
 
-			if (!tsoap){
-				printf ("SOAP copy error!\n");
-				break;
-			}
+        // Copy the SOAP environment
+        tsoap = soap_copy(&soap);
 
-			// Create a new thread to process the request
-			pthread_create(&tid, NULL, (void*(*)(void*))processRequest, (void*)tsoap);
-		}
+        if (!tsoap){
+            printf ("SOAP copy error!\n");
+            break;
+        }
 
-	// Detach SOAP environment
-	soap_done(&soap);
-	return 0;
+        // Create a new thread to process the request
+        pthread_create(&tid, NULL, (void*(*)(void*))processRequest, (void*)tsoap);
+    }
+
+    // Detach SOAP environment
+    soap_done(&soap);
+    return 0;
 }
