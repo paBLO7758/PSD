@@ -124,11 +124,16 @@ conecta3x3ns__tPlayer calculateRandomPlayer (){
 }
 
 int searchEmptyGame (){
+	pthread_mutex_lock(&games[gameId].mutex);
+
 	for (int i = 0; i < MAX_GAMES; i++){
         if (games[i].state == gameEmpty || games[i].state == gameWaitingPlayer){
             return i;
         }
     }
+
+	pthread_mutex_unlock(&games[gameId].mutex);
+
     return ERROR_SERVER_FULL;
    
 }
@@ -154,11 +159,201 @@ void copyGameStatusStructure (conecta3x3ns__tBlock* status, char* message, char*
 }
 
 int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName, int* code){
-
 	
+	int gameId = searchEmptyGame();
+
+	if (gameId == ERROR_SERVER_FULL){
+		*code = ERROR_SERVER_FULL;
+		return SOAP_OK;
+	}
+
+	//Entramos en la sección crítica para modificar el estado del juego
+	pthread_mutex_lock(&games[gameId].mutex);
+
+	// Comprobamos si ya existe un jugador con el mismo nombre en el juego
+	if ((games[gameId].numPlayers >= 1 && strcmp(games[gameId].player1Name, playerName.msg) == 0) ||
+        (games[gameId].numPlayers >= 2 && strcmp(games[gameId].player2Name, playerName.msg) == 0) ||
+        (games[gameId].numPlayers >= 3 && strcmp(games[gameId].player3Name, playerName.msg) == 0)) {
+        
+        pthread_mutex_unlock(&games[gameId].mutex);
+        *code = ERROR_NAME_REPEATED;
+        return SOAP_OK;
+    }
+
+	//Asignamos nombre al jugador correspondiente y actualizamos el número de jugadores
+	if (games[gameId].numPlayers == 0) {
+        strncpy(games[gameId].player1Name, playerName.msg, STRING_LENGTH - 1);
+        games[gameId].player1Name[STRING_LENGTH - 1] = '\0';
+        games[gameId].state = gameWaitingPlayer;
+    } else if (games[gameId].numPlayers == 1) {
+        strncpy(games[gameId].player2Name, playerName.msg, STRING_LENGTH - 1);
+        games[gameId].player2Name[STRING_LENGTH - 1] = '\0';
+    } else if (games[gameId].numPlayers == 2) {
+        strncpy(games[gameId].player3Name, playerName.msg, STRING_LENGTH - 1);
+        games[gameId].player3Name[STRING_LENGTH - 1] = '\0';
+    }
+
+    // Incrementar contadores de jugadores
+    games[gameId].numPlayers++;
+    games[gameId].activePlayers++;
+
+	// Si ya hay 3 jugadores, cambiamos el estado del juego a "listo" y seleccionamos un jugador aleatorio para comenzar
+	if (games[gameId].numPlayers == 3) {
+        games[gameId].state = gameReady;
+        games[gameId].currentPlayer = calculateRandomPlayer();
+    }
+
+    //Devolver el ID de la partida asignada y liberar la sección crítica
+    *code = gameId;
+    pthread_mutex_unlock(&games[gameId].mutex);
+
+    return SOAP_OK;
 }
 
+int conecta3x3ns__getStatus(struct soap *soap, conecta3x3ns__tMessage playerName, int gameId, conecta3x3ns__tBlock *status) {
+    
+    // Reservar memoria gestionada por gSOAP para el bloque de respuesta
+    allocClearBlock(soap, status);
 
+    // Validar identificador de partida
+    if (gameId < 0 || gameId >= MAX_GAMES) {
+        copyGameStatusStructure(status, "Invalid game ID", NULL, ERROR_PLAYER_NOT_FOUND);
+        return SOAP_OK;
+    }
+
+    // Entrar en la sección crítica de la partida
+    pthread_mutex_lock(&games[gameId].mutex);
+
+    // Identificar al jugador que invoca el servicio
+    conecta3x3ns__tPlayer playerEnum;
+    if (strcmp(games[gameId].player1Name, playerName.msg) == 0) {
+        playerEnum = player1;
+    } else if (strcmp(games[gameId].player2Name, playerName.msg) == 0) {
+        playerEnum = player2;
+    } else if (strcmp(games[gameId].player3Name, playerName.msg) == 0) {
+        playerEnum = player3;
+    } else {
+        // El jugador no pertenece a esta partida
+        copyGameStatusStructure(status, "Player not registered in this game", NULL, ERROR_PLAYER_NOT_FOUND);
+        pthread_mutex_unlock(&games[gameId].mutex);
+        return SOAP_OK;
+    }
+
+    // Esperar mientras la partida no esté lista o no sea el turno de este jugador (y la partida no haya acabado)
+    while ((games[gameId].state == gameWaitingPlayer || games[gameId].currentPlayer != playerEnum) 
+           && !games[gameId].isFinished) {
+        pthread_cond_wait(&games[gameId].condTurn, &games[gameId].mutex);
+    }
+
+    // Si la partida ha terminado mientras esperaba
+    if (games[gameId].isFinished) {
+        if (games[gameId].winner == playerEnum) {
+            copyGameStatusStructure(status, "You win!", games[gameId].board, GAMEOVER_WIN);
+        } else if (games[gameId].winner == -1) {
+            copyGameStatusStructure(status, "Draw game!", games[gameId].board, GAMEOVER_DRAW);
+        } else {
+            copyGameStatusStructure(status, "You lose!", games[gameId].board, GAMEOVER_LOSE);
+        }
+
+        // Gestión del fin de partida por el último jugador activo
+        games[gameId].activePlayers--;
+        if (games[gameId].activePlayers == 0) {
+            games[gameId].state = gameEmpty;
+            games[gameId].isFinished = FALSE;
+            games[gameId].numPlayers = 0;
+            initBoard(games[gameId].board);
+        }
+
+        pthread_mutex_unlock(&games[gameId].mutex);
+        return SOAP_OK;
+    }
+
+    // Es su turno para mover
+    copyGameStatusStructure(status, "It's your turn!", games[gameId].board, TURN_MOVE);
+
+    pthread_mutex_unlock(&games[gameId].mutex);
+    return SOAP_OK;
+}
+
+int conecta3x3ns__insertChip(struct soap *soap, conecta3x3ns__tMessage playerName, int gameId, unsigned int column, conecta3x3ns__tBlock *gameStatus) {
+
+    // Reservar memoria gestionada por gSOAP para la respuesta
+    allocClearBlock(soap, gameStatus);
+
+    // Validar identificador de la partida
+    if (gameId < 0 || gameId >= MAX_GAMES) {
+        copyGameStatusStructure(gameStatus, "Invalid game ID", NULL, ERROR_PLAYER_NOT_FOUND);
+        return SOAP_OK;
+    }
+
+    // Entrar en la sección crítica de la partida
+    pthread_mutex_lock(&games[gameId].mutex);
+
+    // Identificar al jugador que invoca el servicio
+    conecta3x3ns__tPlayer playerEnum;
+    if (strcmp(games[gameId].player1Name, playerName.msg) == 0) {
+        playerEnum = player1;
+    } else if (strcmp(games[gameId].player2Name, playerName.msg) == 0) {
+        playerEnum = player2;
+    } else if (strcmp(games[gameId].player3Name, playerName.msg) == 0) {
+        playerEnum = player3;
+    } else {
+        copyGameStatusStructure(gameStatus, "Player not registered in this game", NULL, ERROR_PLAYER_NOT_FOUND);
+        pthread_mutex_unlock(&games[gameId].mutex);
+        return SOAP_OK;
+    }
+
+    // Verificar que sea el turno del jugador y la partida esté activa
+    if (games[gameId].state != gameReady || games[gameId].currentPlayer != playerEnum || games[gameId].isFinished) {
+        copyGameStatusStructure(gameStatus, "It is not your turn or the game is not ready!", games[gameId].board, TURN_WAIT);
+        pthread_mutex_unlock(&games[gameId].mutex);
+        return SOAP_OK;
+    }
+
+    // Validar si la jugada es válida (columna dentro de rango y no llena)
+    conecta3x3ns__tMove moveResult = checkMove(games[gameId].board, column);
+    if (moveResult != OK_move) {
+        // La columna está llena o fuera de rango
+        copyGameStatusStructure(gameStatus, "Invalid move! Column full or out of bounds.", games[gameId].board, TURN_MOVE);
+        pthread_mutex_unlock(&games[gameId].mutex);
+        return SOAP_OK;
+    }
+
+    // Insertar la ficha en el tablero
+    insertChip(games[gameId].board, playerEnum, column);
+
+    // Comprobar condiciones de fin de juego o cambio de turno
+
+    if (checkWinner(games[gameId].board, playerEnum)) {
+        games[gameId].isFinished = TRUE;
+        games[gameId].winner = playerEnum;
+
+        copyGameStatusStructure(gameStatus, "You win!", games[gameId].board, GAMEOVER_WIN);
+
+        pthread_cond_broadcast(&games[gameId].condTurn);
+    }
+    else if (isBoardFull(games[gameId].board)) {
+        games[gameId].isFinished = TRUE;
+        games[gameId].winner = -1; // -1 indica empate
+
+        copyGameStatusStructure(gameStatus, "Draw game!", games[gameId].board, GAMEOVER_DRAW);
+
+        // Notificar el fin de juego a todos
+        pthread_cond_broadcast(&games[gameId].condTurn);
+    }
+    else {
+        games[gameId].currentPlayer = calculateNextPlayer(games[gameId].currentPlayer);
+
+        copyGameStatusStructure(gameStatus, "Move played successfully.", games[gameId].board, TURN_WAIT);
+
+        // Despertar a los hilos esperando en getStatus() para que continúe el jugador del siguiente turno
+        pthread_cond_broadcast(&games[gameId].condTurn);
+    }
+
+    // Liberar la sección crítica y retornar
+    pthread_mutex_unlock(&games[gameId].mutex);
+    return SOAP_OK;
+}
 
 void *processRequest(void *soap){
 
