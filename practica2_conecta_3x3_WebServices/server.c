@@ -135,17 +135,21 @@ int searchEmptyGame (){
 void copyGameStatusStructure (conecta3x3ns__tBlock* status, char* message, char* board, int newCode){
 
     // Copy the message
-    strcpy ((status->msgStruct).msg, message);
-    (status->msgStruct).__size = strlen ((status->msgStruct).msg);
+    if (message != NULL && status->msgStruct.msg != NULL) {
+        strncpy ((status->msgStruct).msg, message, STRING_LENGTH - 1);
+        (status->msgStruct).msg[STRING_LENGTH - 1] = '\0';
+        (status->msgStruct).__size = strlen ((status->msgStruct).msg) + 1; // Incluir '\0'
+    }
 
     // Copy the board, only if it is not NULL
-    if (board == NULL){
+    if (board == NULL || status->board == NULL){
         status->board = NULL;
         status->__size = 0;
     }
     else{
-        strncpy (status->board, board, BOARD_WIDTH*BOARD_HEIGHT);
-        status->__size = BOARD_WIDTH*BOARD_HEIGHT;
+        strncpy (status->board, board, BOARD_WIDTH * BOARD_HEIGHT);
+        status->board[BOARD_WIDTH * BOARD_HEIGHT] = '\0';
+        status->__size = strlen(status->board) + 1; // Incluir '\0'
     }
 
     // Set the new code
@@ -161,13 +165,19 @@ int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName
         return SOAP_OK;
     }
 
+    char cleanName[STRING_LENGTH];
+    memset(cleanName, 0, STRING_LENGTH);
+    if (playerName.msg != NULL) {
+        strncpy(cleanName, playerName.msg, STRING_LENGTH - 1);
+    }
+
     // Entramos en la sección crítica para modificar el estado del juego
     pthread_mutex_lock(&games[gameId].mutex);
 
     // Comprobamos si ya existe un jugador con el mismo nombre en el juego
-    if ((games[gameId].numPlayers >= 1 && strcmp(games[gameId].player1Name, playerName.msg) == 0) ||
-        (games[gameId].numPlayers >= 2 && strcmp(games[gameId].player2Name, playerName.msg) == 0) ||
-        (games[gameId].numPlayers >= 3 && strcmp(games[gameId].player3Name, playerName.msg) == 0)) {
+    if ((games[gameId].numPlayers >= 1 && strcmp(games[gameId].player1Name, cleanName) == 0) ||
+        (games[gameId].numPlayers >= 2 && strcmp(games[gameId].player2Name, cleanName) == 0) ||
+        (games[gameId].numPlayers >= 3 && strcmp(games[gameId].player3Name, cleanName) == 0)) {
         
         pthread_mutex_unlock(&games[gameId].mutex);
         *code = ERROR_NAME_REPEATED;
@@ -176,14 +186,14 @@ int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName
 
     // Asignamos nombre al jugador correspondiente y actualizamos el número de jugadores
     if (games[gameId].numPlayers == 0) {
-        strncpy(games[gameId].player1Name, playerName.msg, STRING_LENGTH - 1);
+        strncpy(games[gameId].player1Name, cleanName, STRING_LENGTH - 1);
         games[gameId].player1Name[STRING_LENGTH - 1] = '\0';
         games[gameId].state = gameWaitingPlayer;
     } else if (games[gameId].numPlayers == 1) {
-        strncpy(games[gameId].player2Name, playerName.msg, STRING_LENGTH - 1);
+        strncpy(games[gameId].player2Name, cleanName, STRING_LENGTH - 1);
         games[gameId].player2Name[STRING_LENGTH - 1] = '\0';
     } else if (games[gameId].numPlayers == 2) {
-        strncpy(games[gameId].player3Name, playerName.msg, STRING_LENGTH - 1);
+        strncpy(games[gameId].player3Name, cleanName, STRING_LENGTH - 1);
         games[gameId].player3Name[STRING_LENGTH - 1] = '\0';
     }
 
@@ -195,6 +205,7 @@ int conecta3x3ns__register (struct soap *soap, conecta3x3ns__tMessage playerName
     if (games[gameId].numPlayers == 3) {
         games[gameId].state = gameReady;
         games[gameId].currentPlayer = calculateRandomPlayer();
+        pthread_cond_broadcast(&games[gameId].condTurn);
     }
 
     // Devolver el ID de la partida asignada y liberar la sección crítica
@@ -215,16 +226,22 @@ int conecta3x3ns__getStatus(struct soap *soap, conecta3x3ns__tMessage playerName
         return SOAP_OK;
     }
 
+    char cleanName[STRING_LENGTH];
+    memset(cleanName, 0, STRING_LENGTH);
+    if (playerName.msg != NULL) {
+        strncpy(cleanName, playerName.msg, STRING_LENGTH - 1);
+    }
+
     // Entrar en la sección crítica de la partida
     pthread_mutex_lock(&games[gameId].mutex);
 
     // Identificar al jugador que invoca el servicio
     conecta3x3ns__tPlayer playerEnum;
-    if (strcmp(games[gameId].player1Name, playerName.msg) == 0) {
+    if (strcmp(games[gameId].player1Name, cleanName) == 0) {
         playerEnum = player1;
-    } else if (strcmp(games[gameId].player2Name, playerName.msg) == 0) {
+    } else if (strcmp(games[gameId].player2Name, cleanName) == 0) {
         playerEnum = player2;
-    } else if (strcmp(games[gameId].player3Name, playerName.msg) == 0) {
+    } else if (strcmp(games[gameId].player3Name, cleanName) == 0) {
         playerEnum = player3;
     } else {
         // El jugador no pertenece a esta partida
@@ -280,16 +297,22 @@ int conecta3x3ns__insertChip(struct soap *soap, conecta3x3ns__tMessage playerNam
         return SOAP_OK;
     }
 
+    char cleanName[STRING_LENGTH];
+    memset(cleanName, 0, STRING_LENGTH);
+    if (playerName.msg != NULL) {
+        strncpy(cleanName, playerName.msg, STRING_LENGTH - 1);
+    }
+
     // Entrar en la sección crítica de la partida
     pthread_mutex_lock(&games[gameId].mutex);
 
     // Identificar al jugador que invoca el servicio
     conecta3x3ns__tPlayer playerEnum;
-    if (strcmp(games[gameId].player1Name, playerName.msg) == 0) {
+    if (strcmp(games[gameId].player1Name, cleanName) == 0) {
         playerEnum = player1;
-    } else if (strcmp(games[gameId].player2Name, playerName.msg) == 0) {
+    } else if (strcmp(games[gameId].player2Name, cleanName) == 0) {
         playerEnum = player2;
-    } else if (strcmp(games[gameId].player3Name, playerName.msg) == 0) {
+    } else if (strcmp(games[gameId].player3Name, cleanName) == 0) {
         playerEnum = player3;
     } else {
         copyGameStatusStructure(gameStatus, "Player not registered in this game", NULL, ERROR_PLAYER_NOT_FOUND);
